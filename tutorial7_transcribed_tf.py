@@ -13,21 +13,30 @@ from tensorflow.keras.utils import to_categorical
 train_images = train_images / 255.0
 test_images = test_images / 255.0
 
-# Create a validation split from the training set.
+
+def train_val_split(images, labels, validation_split=0.1, seed=42):
+    """Create a validation split from training data while preserving a true test holdout."""
+    num_samples = images.shape[0]
+    split_idx = int(num_samples * (1 - validation_split))
+    rng = np.random.default_rng(seed)
+    indices = rng.permutation(num_samples)
+    train_idx, val_idx = indices[:split_idx], indices[split_idx:]
+
+    train_x = images[train_idx]
+    train_y = labels[train_idx]
+    val_x = images[val_idx]
+    val_y = labels[val_idx]
+    return train_x, train_y, val_x, val_y
+
+
+# Create validation data only from the training split.
 # Keep test split untouched for final evaluation only.
-validation_split = 0.1
-num_train = train_images.shape[0]
-split_idx = int(num_train * (1 - validation_split))
-rng = np.random.default_rng(42)
-indices = rng.permutation(num_train)
-
-train_idx = indices[:split_idx]
-val_idx = indices[split_idx:]
-
-val_images = train_images[val_idx]
-val_labels = train_labels[val_idx]
-train_images = train_images[train_idx]
-train_labels = train_labels[train_idx]
+train_images, train_labels, val_images, val_labels = train_val_split(
+    train_images,
+    train_labels,
+    validation_split=0.1,
+    seed=42,
+)
 
 # Convert labels to categorical
 train_labels = to_categorical(train_labels, 10)
