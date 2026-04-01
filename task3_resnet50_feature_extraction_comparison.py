@@ -2,7 +2,7 @@ import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, models, transforms
 
 
@@ -51,7 +51,7 @@ def run_epoch(model, loader, criterion, device, optimizer=None):
     return total_loss / total, correct / total
 
 
-def train_and_eval(model, train_loader, test_loader, epochs, lr, device, tag, weight_decay=0.0):
+def train_and_eval(model, train_loader, val_loader, test_loader, epochs, lr, device, tag, weight_decay=0.0):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam((p for p in model.parameters() if p.requires_grad), lr=lr, weight_decay=weight_decay)
     model = model.to(device)
@@ -60,18 +60,19 @@ def train_and_eval(model, train_loader, test_loader, epochs, lr, device, tag, we
     best_state = copy.deepcopy(model.state_dict())
     for epoch in range(1, epochs + 1):
         tr_loss, tr_acc = run_epoch(model, train_loader, criterion, device, optimizer)
-        te_loss, te_acc = run_epoch(model, test_loader, criterion, device)
-        if te_acc > best_acc:
-            best_acc = te_acc
+        val_loss, val_acc = run_epoch(model, val_loader, criterion, device)
+        if val_acc > best_acc:
+            best_acc = val_acc
             best_state = copy.deepcopy(model.state_dict())
         print(
             f"[{tag}] Epoch {epoch}/{epochs} | "
             f"Train Loss: {tr_loss:.4f}, Train Acc: {tr_acc:.4f} | "
-            f"Test Loss: {te_loss:.4f}, Test Acc: {te_acc:.4f}"
+            f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}"
         )
 
     model.load_state_dict(best_state)
-    return best_acc
+    _, test_acc = run_epoch(model, test_loader, criterion, device)
+    return test_acc
 
 
 def build_vgg16_feature_extractor():
@@ -109,19 +110,34 @@ def main():
     train_pre = datasets.CIFAR10("./data", train=True, download=True, transform=tf_pretrained)
     test_pre = datasets.CIFAR10("./data", train=False, download=True, transform=tf_pretrained)
 
-    train_custom_loader = DataLoader(train_custom, batch_size=128, shuffle=True, num_workers=2)
+    custom_train_len = int(0.9 * len(train_custom))
+    custom_val_len = len(train_custom) - custom_train_len
+    pre_train_len = int(0.9 * len(train_pre))
+    pre_val_len = len(train_pre) - pre_train_len
+
+    custom_train_ds, custom_val_ds = random_split(
+        train_custom, [custom_train_len, custom_val_len], generator=torch.Generator().manual_seed(42)
+    )
+    pre_train_ds, pre_val_ds = random_split(
+        train_pre, [pre_train_len, pre_val_len], generator=torch.Generator().manual_seed(42)
+    )
+
+    train_custom_loader = DataLoader(custom_train_ds, batch_size=128, shuffle=True, num_workers=2)
+    val_custom_loader = DataLoader(custom_val_ds, batch_size=256, shuffle=False, num_workers=2)
     test_custom_loader = DataLoader(test_custom, batch_size=256, shuffle=False, num_workers=2)
-    train_pre_loader = DataLoader(train_pre, batch_size=64, shuffle=True, num_workers=2)
+
+    train_pre_loader = DataLoader(pre_train_ds, batch_size=64, shuffle=True, num_workers=2)
+    val_pre_loader = DataLoader(pre_val_ds, batch_size=128, shuffle=False, num_workers=2)
     test_pre_loader = DataLoader(test_pre, batch_size=128, shuffle=False, num_workers=2)
 
     custom_model = CustomCNN(num_classes=10)
-    custom_acc = train_and_eval(custom_model, train_custom_loader, test_custom_loader, epochs=8, lr=1e-3, device=device, tag="Custom CNN")
+    custom_acc = train_and_eval(custom_model, train_custom_loader, val_custom_loader, test_custom_loader, epochs=8, lr=1e-3, device=device, tag="Custom CNN")
 
     vgg_model = build_vgg16_feature_extractor()
-    vgg_acc = train_and_eval(vgg_model, train_pre_loader, test_pre_loader, epochs=5, lr=1e-3, device=device, tag="VGG16 Feature Extract")
+    vgg_acc = train_and_eval(vgg_model, train_pre_loader, val_pre_loader, test_pre_loader, epochs=5, lr=1e-3, device=device, tag="VGG16 Feature Extract")
 
     resnet_model = build_resnet50_feature_extractor()
-    resnet_acc = train_and_eval(resnet_model, train_pre_loader, test_pre_loader, epochs=5, lr=1e-3, device=device, tag="ResNet50 Feature Extract")
+    resnet_acc = train_and_eval(resnet_model, train_pre_loader, val_pre_loader, test_pre_loader, epochs=5, lr=1e-3, device=device, tag="ResNet50 Feature Extract")
 
     print("\n=== Task 3 Final Comparison (CIFAR-10 Test Accuracy) ===")
     print("{:<35} {:>10}".format("Model", "Accuracy"))

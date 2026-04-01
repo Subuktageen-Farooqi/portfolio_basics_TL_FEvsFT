@@ -2,7 +2,7 @@ import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, models, transforms
 
 
@@ -27,25 +27,25 @@ def epoch_pass(model, loader, criterion, device, optimizer=None):
     return total_loss / total, correct / total
 
 
-def train_model(model, train_loader, test_loader, optimizer, criterion, device, epochs, tag):
+def train_model(model, train_loader, val_loader, optimizer, criterion, device, epochs, tag):
     best_acc = 0.0
     best_state = copy.deepcopy(model.state_dict())
 
     for ep in range(1, epochs + 1):
         tr_loss, tr_acc = epoch_pass(model, train_loader, criterion, device, optimizer)
-        te_loss, te_acc = epoch_pass(model, test_loader, criterion, device)
-        if te_acc > best_acc:
-            best_acc = te_acc
+        val_loss, val_acc = epoch_pass(model, val_loader, criterion, device)
+        if val_acc > best_acc:
+            best_acc = val_acc
             best_state = copy.deepcopy(model.state_dict())
 
         print(
             f"[{tag}] Epoch {ep}/{epochs} | "
             f"Train Loss: {tr_loss:.4f}, Train Acc: {tr_acc:.4f} | "
-            f"Test Loss: {te_loss:.4f}, Test Acc: {te_acc:.4f}"
+            f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}"
         )
 
     model.load_state_dict(best_state)
-    return model, best_acc
+    return model
 
 
 def main():
@@ -61,7 +61,14 @@ def main():
     train_ds = datasets.CIFAR10("./data", train=True, download=True, transform=transform)
     test_ds = datasets.CIFAR10("./data", train=False, download=True, transform=transform)
 
-    train_loader = DataLoader(train_ds, batch_size=64, shuffle=True, num_workers=2)
+    train_len = int(0.9 * len(train_ds))
+    val_len = len(train_ds) - train_len
+    train_split, val_split = random_split(
+        train_ds, [train_len, val_len], generator=torch.Generator().manual_seed(42)
+    )
+
+    train_loader = DataLoader(train_split, batch_size=64, shuffle=True, num_workers=2)
+    val_loader = DataLoader(val_split, batch_size=128, shuffle=False, num_workers=2)
     test_loader = DataLoader(test_ds, batch_size=128, shuffle=False, num_workers=2)
 
     criterion = nn.CrossEntropyLoss()
@@ -79,7 +86,8 @@ def main():
 
     vgg = vgg.to(device)
     vgg_optimizer = optim.Adam((p for p in vgg.parameters() if p.requires_grad), lr=1e-4, weight_decay=1e-4)
-    vgg, vgg_acc = train_model(vgg, train_loader, test_loader, vgg_optimizer, criterion, device, epochs=6, tag="VGG16 Fine-Tune")
+    vgg = train_model(vgg, train_loader, val_loader, vgg_optimizer, criterion, device, epochs=6, tag="VGG16 Fine-Tune")
+    _, vgg_acc = epoch_pass(vgg, test_loader, criterion, device)
 
     # ResNet50 feature extraction (head only)
     resnet = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2)
@@ -89,9 +97,10 @@ def main():
     resnet = resnet.to(device)
 
     resnet_optimizer = optim.Adam(resnet.fc.parameters(), lr=1e-3)
-    resnet, resnet_acc = train_model(
-        resnet, train_loader, test_loader, resnet_optimizer, criterion, device, epochs=5, tag="ResNet50 Feature Extract"
+    resnet = train_model(
+        resnet, train_loader, val_loader, resnet_optimizer, criterion, device, epochs=5, tag="ResNet50 Feature Extract"
     )
+    _, resnet_acc = epoch_pass(resnet, test_loader, criterion, device)
 
     print("\n=== Task 4 Comparison Summary ===")
     print(f"VGG16 Fine-Tuning Test Accuracy: {vgg_acc:.4f}")
