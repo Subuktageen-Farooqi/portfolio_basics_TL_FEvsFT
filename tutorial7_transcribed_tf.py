@@ -1,6 +1,7 @@
 # Tutorial 7: Transfer Learning (TensorFlow / Keras)
 
 import tensorflow as tf
+import numpy as np
 from tensorflow.keras import datasets, layers, models
 from tensorflow.keras.applications import VGG16, ResNet50
 from tensorflow.keras.utils import to_categorical
@@ -12,8 +13,25 @@ from tensorflow.keras.utils import to_categorical
 train_images = train_images / 255.0
 test_images = test_images / 255.0
 
+# Create a validation split from the training set.
+# Keep test split untouched for final evaluation only.
+validation_split = 0.1
+num_train = train_images.shape[0]
+split_idx = int(num_train * (1 - validation_split))
+rng = np.random.default_rng(42)
+indices = rng.permutation(num_train)
+
+train_idx = indices[:split_idx]
+val_idx = indices[split_idx:]
+
+val_images = train_images[val_idx]
+val_labels = train_labels[val_idx]
+train_images = train_images[train_idx]
+train_labels = train_labels[train_idx]
+
 # Convert labels to categorical
 train_labels = to_categorical(train_labels, 10)
+val_labels = to_categorical(val_labels, 10)
 test_labels = to_categorical(test_labels, 10)
 
 
@@ -41,7 +59,7 @@ vgg_model.compile(optimizer='adam',
 # Train
 vgg_model.fit(train_images, train_labels,
               epochs=5,
-              validation_data=(test_images, test_labels))
+              validation_data=(val_images, val_labels))
 
 # Evaluate
 vgg_loss, vgg_acc = vgg_model.evaluate(test_images, test_labels)
@@ -73,7 +91,7 @@ resnet_model.compile(optimizer='adam',
 # Train initial classifier
 resnet_model.fit(train_images, train_labels,
                  epochs=5,
-                 validation_data=(test_images, test_labels))
+                 validation_data=(val_images, val_labels))
 
 
 # Step 4: Fine-tuning (unfreeze some layers)
@@ -90,7 +108,7 @@ resnet_model.compile(optimizer=tf.keras.optimizers.Adam(1e-5),
 # Continue training
 resnet_model.fit(train_images, train_labels,
                  epochs=5,
-                 validation_data=(test_images, test_labels))
+                 validation_data=(val_images, val_labels))
 
 # Evaluate
 resnet_loss, resnet_acc = resnet_model.evaluate(test_images, test_labels)
